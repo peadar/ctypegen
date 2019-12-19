@@ -70,6 +70,7 @@ protect( int perms, void * p, size_t len ) {
 struct GOTMock {
    PyObject_HEAD std::map< ElfW( Addr ), void * > replaced;
    void * callback;
+   uintptr_t realaddr;
    const char * function;
    GOTMock( const char * name_, void * callback_, void * handle_ );
    void processLibrary( const char *,
@@ -111,6 +112,7 @@ struct PreMock : public GOTMock {
 struct StompMock {
    // clang-format off
    PyObject_HEAD
+   uintptr_t realaddr;
    static constexpr int savesize = __WORDSIZE == 32 ? 5 : 13;
 
 
@@ -134,14 +136,10 @@ struct StompMock {
  */
 GOTMock::GOTMock( const char * name_, void * callback_, void * handle )
       : callback( callback_ ), function( name_ ) {
-   if ( handle == 0 ) {
-      // Override function in all libraries.
-      for ( auto map = _r_debug.r_map; map; map = map->l_next )
-         processLibrary( map->l_name, map->l_ld, map->l_addr, function );
-   } else {
-      auto map = static_cast< link_map * >( handle );
+   // Override function in all libraries.
+   for ( auto map = _r_debug.r_map; map; map = map->l_next )
       processLibrary( map->l_name, map->l_ld, map->l_addr, function );
-   }
+   realaddr = (uintptr_t)dlsym(handle, name_);
 }
 
 /*
@@ -236,6 +234,8 @@ GOTMock::disable() {
    for ( auto & addr : replaced )
       *( void ** )addr.first = addr.second;
 }
+
+
 
 /*
  * Process a single library's relocation information:
@@ -370,6 +370,14 @@ disableMock( PyObject * self, PyObject * args ) {
 }
 
 template< typename T >
+static PyObject *
+realfuncMock( PyObject * self, PyObject * args ) {
+   auto * mock = reinterpret_cast< T * >( self );
+   return PyLong_FromLong(mock->realaddr);
+}
+
+
+template< typename T >
 static void
 freeMock( PyObject * self ) {
    std::clog << "************ freeing mock!\n";
@@ -392,6 +400,7 @@ populateType( PyObject * module,
    static PyMethodDef methods[] = {
       { "enable", enableMock< T >, METH_VARARGS, "enable the mock" },
       { "disable", disableMock< T >, METH_VARARGS, "disable the mock" },
+      { "realfunc", realfuncMock< T >, METH_VARARGS, "get pointer to real method" },
       { 0, 0, 0, 0 }
    };
    pto.tp_name = name;

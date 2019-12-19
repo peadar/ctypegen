@@ -18,6 +18,7 @@ import site
 import glob
 from contextlib import contextmanager
 import libCTypeMock
+import ctypes
 
 # We need to look inside ctypes a bit, so, pylint: disable=protected-access
 
@@ -62,14 +63,14 @@ class Mock( object ):
                            "Provide 'argtypes' manually, or generate with "
                            "CTypeGen\n" % function.__name__ )
          raise
-      self.callbackType = CFUNCTYPE( None if method == PRE else function.restype,
-                                     *function.argtypes )
       self.function = function
       if method is None:
          # Defaults to GOT for 64 bit, STOMP for 32 bits
          self.method = GOT if sys.maxsize > 2**32 else STOMP
       else:
          self.method = method
+      self.callbackType = CFUNCTYPE( None if method == PRE else function.restype,
+                                     *function.argtypes )
       self.linkername = linkername
       self.mock = None
 
@@ -78,16 +79,18 @@ class Mock( object ):
          self.linkername = self.function.__name__
       callback = self.callbackType( toMock )
       callbackForC = cmockCdll.cfuncTypeToPtrToFunc( callback )
+      handle = self.inlib._handle if self.inlib else 0
       if self.method == GOT:
-         self.mock = libCTypeMock.GOTMock( self.linkername, callbackForC, 0 )
+         self.mock = libCTypeMock.GOTMock( self.linkername, callbackForC, handle )
+         # This only works for GOT mocks: STOMP mocks would just recurse infinitely.
+         toMock.realfunc = ctypes.cast( self.mock.realfunc(), self.callbackType )
       elif self.method == STOMP:
-         self.mock = libCTypeMock.StompMock( self.linkername, callbackForC,
-                 self.inlib._handle if self.inlib else 0 )
+         self.mock = libCTypeMock.StompMock( self.linkername, callbackForC, handle )
       elif self.method == PRE:
-         self.mock = libCTypeMock.PreMock( self.linkername, callbackForC,
-                 self.inlib._handle if self.inlib else 0 )
+         self.mock = libCTypeMock.PreMock( self.linkername, callbackForC, handle )
       else:
          assert False, "Unknown mock method %s" % self.method
+
       toMock.disable = self.mock.disable
       toMock.enable = self.mock.enable
       callbacks.append( ( callback, toMock ) )

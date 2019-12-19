@@ -24,10 +24,14 @@ CTypeSanity: CTypeSanityC.o CTypeSanity.o
 
 MockTest: MockTest.o
 	$(CXX) -shared -o $@ $^
+
 libPreMockTest.so: PreMockTest.o
 	$(CXX) -shared -o $@ $^
 
-check-bins: CTypeSanity MockTest libPreMockTest.so
+libChainTest.so: ChainTest.o
+	$(CXX) -shared -o $@ $^
+
+check-bins: CTypeSanity MockTest libPreMockTest.so libChainTest.so
 
 check-ctypesanity: check-bins
 	$(PYTHON) ./CTypeGenSanity.py ./CTypeSanity
@@ -35,10 +39,14 @@ check-ctypesanity: check-bins
 check-mock: check-bins
 	$(PYTHON) ./MockTest.py ./MockTest
 
+check-chain: check-bins
+	$(PYTHON) ./ChainTest.py ./libChainTest.so
+
 check-pre-mock: check-bins
 	$(PYTHON) ./PreMockTest.py ./libPreMockTest.so
 
-check: check-mock check-pre-mock check-ctypesanity
+check: check-mock check-pre-mock check-ctypesanity check-chain
 
 clean:
-	rm -f *.o CTypeSanity CTypeSanity.py *.pyc MockTest proggen.py premock.py
+	rm -f *.o CTypeSanity CTypeSanity.py *.pyc MockTest proggen.py premock.py \
+	libPreMockTest.so libChainTest chaintest.py

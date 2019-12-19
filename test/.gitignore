@@ -3,3 +3,7 @@ CTypeSanity.py
 PreMockTest
 MockTest
 proggen.py
+chaintest.py
+libChainTest.so
+libPreMockTest.so
+premock.py
