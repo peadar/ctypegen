@@ -489,36 +489,39 @@ class MemberType( Type ):
          out.write( u"%s.allow_unaligned = %s\n" % ( self.pyName(), unaligned ) )
 
       # quoting the 'p' below stops pylint gagging on this file.
-      out.write( u"%s._fields_ = [ # \x70ylint: disable=protected-access\n" %
-            self.pyName() )
-      for memnum, member in enumerate( self.members ):
-         # First make sure we actually have a proper definition of the type
-         # for this field. For example, clang++ will not generate the debug info
-         # for std::string by default, and we are left with an incomplete type
-         # for strings. ctypes has no way of directly controlling the offset for
-         # a field, so we need to give the field a type of the correct size, at least
-         # - if we don't find a definition for the field's type, then we just
-         # make it an array of characters of the appropriate size.
-         if not member.type().defined:
-            myOffset = member.die.DW_AT_data_member_location or 0
-            if memnum + 1 < len( self.members ):
-               nextOffset = self.members[ memnum + 1 ].die.DW_AT_data_member_location
-               size = nextOffset - myOffset
-            else:
-               size = self.die.DW_AT_byte_size - myOffset
-            typstr = "c_char * %d" % size
-            self.resolver.errorfunc(
-                  "padded %s:%s (no definition for %s)" % (
-                     self.name(), member.name(), member.type().name() ) )
+      if self.members:
+          out.write( u"%s._fields_ = [ # \x70ylint: disable=protected-access\n" %
+                self.pyName() )
+          for memnum, member in enumerate( self.members ):
+             # First make sure we actually have a proper definition of the type
+             # for this field. For example, clang++ will not generate the debug
+             # info for std::string by default, and we are left with an
+             # incomplete type for strings. ctypes has no way of directly
+             # controlling the offset for a field, so we need to give the field
+             # a type of the correct size, at least - if we don't find a
+             # definition for the field's type, then we just make it an array
+             # of characters of the appropriate size.
+             if not member.type().defined:
+                myOffset = member.die.DW_AT_data_member_location or 0
+                if memnum + 1 < len( self.members ):
+                   nextOffset = self.members[ memnum + 1 ].die. \
+                           DW_AT_data_member_location
+                   size = nextOffset - myOffset
+                else:
+                   size = self.die.DW_AT_byte_size - myOffset
+                typstr = "c_char * %d" % size
+                self.resolver.errorfunc(
+                      "padded %s:%s (no definition for %s)" % (
+                         self.name(), member.name(), member.type().name() ) )
 
-         else:
-            typstr = member.ctype()
-         if member.bit_size():
-            out.write( u"   ( \"%s\", %s, %d ),\n" %
-                  ( member.pyName(), typstr, member.bit_size() ) )
-         else:
-            out.write( u"   ( \"%s\", %s ),\n" % ( member.name(), typstr ) )
-      out.write( u"]\n" )
+             else:
+                typstr = member.ctype()
+             if member.bit_size():
+                out.write( u"   ( \"%s\", %s, %d ),\n" %
+                      ( member.pyName(), typstr, member.bit_size() ) )
+             else:
+                out.write( u"   ( \"%s\", %s ),\n" % ( member.name(), typstr ) )
+          out.write( u"]\n" )
       if self.anonMembers:
          out.write( u"%s._anonymous_ = (\n" % self.pyName() )
          for field in self.anonMembers:
@@ -568,6 +571,17 @@ class UnionType( MemberType ):
 
    def ctype_subclass( self ):
       return u"Union"
+
+   def define( self, out ):
+      if not super( UnionType, self ).define( out ):
+          return False
+      if len(self.members) == 0 and self.die.DW_AT_byte_size != None:
+          out.write( u"%s._fields_ = [('__broken_transparent_union', c_void_p)]\n"
+                  % self.pyName() )
+      return True
+
+
+
 
 class EnumType( Type ):
    __slots__ = []
@@ -624,6 +638,7 @@ class PrimitiveType( Type ):
          u"bool" : u"c_bool",
          u"double" : u"c_double",
          u"long double" : u"c_longdouble",
+         u"_Float128" : u"c_longdouble",
          u"__int128" : u"(c_longlong * 2)",
          u"wchar_t" : u"c_wchar",
    }
