@@ -65,6 +65,8 @@ def asPythonId( s ):
          u">" : u"_gt",
          u"(" : u"_lp",
          u")" : u"_rp",
+         u"-" : u"_dash",
+         u"=" : u"_eq",
          u"*" : u"_ptr",
          u" " : u"_sp",
          u"," : u"_comma",
@@ -489,6 +491,17 @@ class MemberType( Type ):
          out.write( u"%s.allow_unaligned = %s\n" % ( self.pyName(), unaligned ) )
 
       # quoting the 'p' below stops pylint gagging on this file.
+      def smallestType( bits ):
+          if bits <= 8:
+              return "c_byte"
+          if bits <= 16:
+              return "c_short"
+          if bits <= 32:
+              return "c_uint"
+          if bits <= 64:
+              return "c_ulonglong"
+          return "None"
+
       if self.members:
           out.write( u"%s._fields_ = [ # \x70ylint: disable=protected-access\n" %
                 self.pyName() )
@@ -518,7 +531,8 @@ class MemberType( Type ):
                 typstr = member.ctype()
              if member.bit_size():
                 out.write( u"   ( \"%s\", %s, %d ),\n" %
-                      ( member.pyName(), typstr, member.bit_size() ) )
+                      ( member.pyName(), smallestType( member.bit_size() ),
+                          member.bit_size() ) )
              else:
                 out.write( u"   ( \"%s\", %s ),\n" % ( member.name(), typstr ) )
           out.write( u"]\n" )
@@ -546,6 +560,7 @@ class StructType( MemberType ):
 
       memberCount = 0
       lastOffset = -1
+      bitfieldSize = 0
       for member in self.members:
          memberOffset = member.die.DW_AT_data_member_location
          # All members of a bitfield have the same member offset, and report
@@ -600,14 +615,19 @@ class EnumType( Type ):
          out.write( u'%spass\n\n' % pad( 3 ) )
          out.write( u'# Values of %s (nameless enum)\n' % self.pyName() )
 
+      childcount = 0
       for child in self.definition():
          if self.dieComment():
             out.write( u"%s%s\n" % ( indent, self.dieComment() ) )
          if child.tag() == tags.DW_TAG_enumerator:
+            childcount += 1
             value = child.DW_AT_const_value
             name = asPythonId( child.DW_AT_name )
             out.write( u"%s%s = %s(%d).value # %s\n" % (
                indent, name, self.intType(), value, hex( value ) ) )
+      if childcount == 0:
+         out.write( u"%spass\n" % indent )
+
       out.write( u"\n\n" )
       return True
 
@@ -816,6 +836,8 @@ typeFromTag = {
       tags.DW_TAG_volatile_type : VolatileType,
       tags.DW_TAG_subprogram : FunctionDefType,
       tags.DW_TAG_restrict_type : RestrictType,
+      tags.DW_TAG_unspecified_type : PointerType,
+      tags.DW_TAG_ptr_to_member_type : PointerType,
 }
 
 class Namespace( object ):
@@ -934,10 +956,10 @@ class TypeResolver( object ):
          "namespaceFilter",
    ]
 
-   def __init__( self, libnames, requiredTypes, functions, existingTypes, errorfunc,
+   def __init__( self, dwarves, requiredTypes, functions, existingTypes, errorfunc,
                  globalVars, deepInspect, namelessEnums, namespaceFilter ):
 
-      self.dwarves = [ libCTypeGen.open( libname ) for libname in libnames ]
+      self.dwarves = dwarves
       self.typesByDieKey = {}
       self.declaredTypes = {}
       self.definedTypes = {}
@@ -1277,10 +1299,20 @@ class PythonType( object ):
    def __hash__( self ):
       return hash( self.cName )
 
-def generate( binaries, outname, types, functions, header=None, modname=None,
+def getDwarves( libnames ):
+   # Allow libnames to be a single string, or list thereof.
+   if isinstance( libnames, baseString ):
+      libnames = [ libnames ]
+   if not isinstance( libnames, list ) or not isinstance(
+         libnames[ 0 ], baseString ):
+      return None
+   return [ libCTypeGen.open( libname ) for libname in libnames ]
+
+def generate( libnames, outname, types, functions, header=None, modname=None,
       existingTypes=None, errorfunc=None, globalVars=None, deepInspect=False,
       namelessEnums=False,
       namespaceFilter=lambda name, space, die: name in space.subspaces ):
+
    '''  External interface to generate code from a set of binaries, into a python
    module.
    Parameters:
@@ -1302,14 +1334,32 @@ def generate( binaries, outname, types, functions, header=None, modname=None,
          are used in both for the basic gated types.
    '''
 
-   # Allow binaries to be a single string, or list thereof.
-   if isinstance( binaries, baseString ):
-      binaries = [ binaries ]
-   if not isinstance( binaries, list ) or not isinstance(
-         binaries[ 0 ], baseString ):
+   dwarves = getDwarves( libnames )
+   if not dwarves:
       errorfunc( "CTypeGen.generate requires a list of ELF images as its first" +
                  " argument" )
       return ( None, None )
+
+   return generateDwarf( dwarves,
+                         outname, types, functions, header, modname, existingTypes,
+                         errorfunc, globalVars, deepInspect, namelessEnums,
+                         namespaceFilter )
+
+def generateAll( libs, outname, modname=None ):
+   ''' Simplified "generate" that will generate code for all types, functions,
+   and variables in a library '''
+   dwarves = getDwarves( libs )
+   def allExterns( name, space, die ):
+      return any( [ name in dwarf.dynnames() for dwarf in dwarves ] )
+   return generateDwarf( dwarves, outname, types=lambda x, y, z: True,
+         functions=allExterns, globalVars=allExterns, modname=modname,
+         namespaceFilter=lambda name, space, die: True )
+
+def generateDwarf( binaries, outname, types, functions, header=None, modname=None,
+      existingTypes=None, errorfunc=None, globalVars=None, deepInspect=False,
+      namelessEnums=False,
+      namespaceFilter=lambda name, space, die: name in space.subspaces ):
+
    resolver = TypeResolver( binaries, types, functions, existingTypes, errorfunc,
          globalVars, deepInspect, namelessEnums, namespaceFilter )
    with open( outname, 'w' ) as content:

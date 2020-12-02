@@ -52,8 +52,9 @@ def hasPointers( t ):
    hasPointersMemo[ t ] = rv
    return rv
 
-def raiseError( text ):
-   raise Exception( text )
+errors = []
+def addError( text ):
+   errors.append( text )
 
 def checkUnalignedPtrs( t ):
 
@@ -79,7 +80,7 @@ def checkUnalignedPtrs( t ):
 
       # misaligned field that is a/has pointers. This trips up valgrind.
       if fname not in allowed:
-         raiseError( "unaligned ptr field %s in %s: offset=%d [%d]" % (
+         addError( "unaligned ptr field %s in %s: offset=%d [%d]" % (
                      fname, t.__name__, field.offset,
                      field.offset % alignment ) )
 
@@ -95,7 +96,7 @@ def checkSize( cls ):
    if ctypes.sizeof( cls ) == 0 and cls._ctypegen_native_size == 1:
       # empty C++ classes are size 1. We can let this discrepancy slide.
       return
-   raiseError( "type %s has wrong size. expected %d, got %d" % (
+   addError( "type %s has wrong size. expected %d, got %d" % (
                cls.__name__, cls._ctypegen_native_size, ctypes.sizeof( cls ) ) )
 
 def checkOffsets( cls ):
@@ -109,7 +110,7 @@ def checkOffsets( cls ):
       if offset is not None:
          ctypesOffset = getattr( cls, field[ 0 ] ).offset
          if ctypesOffset != offset:
-            raiseError( "field %s of %s has offset %d, should be %d" %
+            addError( "field %s of %s has offset %d, should be %d" %
                         ( field[ 0 ], str( cls ), ctypesOffset, offset ) )
 
 def test_class( cls ):
@@ -121,3 +122,5 @@ def test_classes():
    # pylint: disable=no-member
    for cls in TestableCtypeClass.__subclasses__():
       test_class( cls )
+   if errors:
+      raise Exception( "\n".join( errors ) )
